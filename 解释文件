@@ -1,0 +1,181 @@
+# Untitled - By: xyycyc - Sat May 25 2024
+
+import sensor, image, time, pyb
+from image import SEARCH_EX, SEARCH_DS
+#p_input = pyb.Pin("P9", pyb.Pin.IN,pyb.Pin.PULL_DOWN)#定义输入条件口,调试代码时用,
+#PULL_DOWN定值为0,进入红绿灯识别代码.PULL_UP为1,进入箭头匹配代码.
+p_input = pyb.Pin("P9", pyb.Pin.IN)#定义输入条件口,实机时候用
+p_red = pyb.Pin("P1", pyb.Pin.OUT_PP)#红灯输出口/二进制编码第一位
+p_green = pyb.Pin("P2", pyb.Pin.OUT_PP)#绿灯输出口/二进制编码第二位
+green_threshold = (67, 92, -74, -54, 10, 53)#(60, 100, -103, -37, 8, 127)
+red_threshold   = (34, 100, 27, 127, -52, 127)
+light_threshold = (98, 100, -17, 9, -10, 7)#三段阈值设定,目前只用了红灯绿灯的阈值
+
+
+sensor.reset() # 初始化sensor
+sensor.set_pixformat(sensor.RGB565) # use RGB565.
+#设置图像色彩格式，有RGB565色彩图和GRAYSCALE灰度图两种
+sensor.set_framesize(sensor.QQVGA) # 使用QQVGA的速度。
+#设置图像像素大小
+sensor.skip_frames(10) # 让新的设置生效。
+sensor.set_auto_whitebal(False) # turn this off.
+Template_left = [image.Image("/left11.pgm"),image.Image("/left12.pgm"),image.Image("/left13.pgm"),image.Image("/left14.pgm"),image.Image("/left15.pgm"),image.Image("/left16.pgm")]
+Template_right = [image.Image("/right11.pgm"),image.Image("/right12.pgm"),image.Image("/right13.pgm"),image.Image("/right14.pgm"),image.Image("/right15.pgm"),image.Image("/right16.pgm")]
+Template_s = [image.Image("/s11.pgm"),image.Image("/s12.pgm"),image.Image("/s13.pgm"),image.Image("/s14.pgm"),image.Image("/s15.pgm"),image.Image("/s16.pgm")]
+#导入左右前三种箭头的模板,后续进行多模板匹配以保证正确率.
+clock = time.clock() # 跟踪FPS帧率
+#中间变量参数初始化
+templecounter = 0#模板计数
+lightcounter = 0#红绿灯计数
+direc = 12#过程变量
+matchcounter_left=0#左转计时器
+matchcounter_right=0#右转计时器
+matchcounter_s=0#直行计时器
+#url为箭头方向计数器
+u = 0
+r = 0
+l = 0
+#红绿计数器
+g = 0
+r = 0
+reset = 1#电压重置参数
+flag = 0#区分初始状态与运行过状态参数
+#while(p_input)
+while(True):
+    clock.tick() # 追踪两个snapshots()之间经过的毫秒数.
+    img = sensor.snapshot() # 拍一张照片并返回图像。
+    #print(p_input.value())
+    if p_input.value() == 1:#进入箭头识别代码
+        flag = 1#更新状态参数
+        reset = 0#更新电压重置参数
+        img.to_grayscale()#转换成灰度图
+        for i in range(6):#左箭头多模板匹配
+            left_t = img.find_template(Template_left[i], 0.8, step=4, search=SEARCH_EX)#匹配函数
+            if left_t:#当出现匹配成功的判定则执行
+                matchcounter_left=matchcounter_left+1#匹配成功计数器
+        for j in range(6):#右箭头多模板匹配,操作同上
+            right_t = img.find_template(Template_right[j], 0.75, step=4, search=SEARCH_EX)
+            if right_t:
+                matchcounter_right=matchcounter_right+1
+        for k in range(6):#直行箭头多模板匹配,操作同上
+            s_t = img.find_template(Template_s[k], 0.8, step=4, search=SEARCH_EX)
+            if s_t:
+                matchcounter_s=matchcounter_s+1
+
+        #注意该段代码有冗余性质(matchcounter与url作用重复),源于历史遗留问题(设计的时候脑抽了).但不影响使用
+        if templecounter<20:#结果输出计时器计数,多次采样取结果防止误判
+            templecounter=templecounter+1#对记过计时器加一次计数,并判断
+            if matchcounter_left>0:
+                l = l+1
+                matchcounter_left = 0
+            if matchcounter_right>0:
+                r = r+1
+                matchcounter_right = 0
+            if matchcounter_s>0:
+                u = u+1
+                matchcounter_s = 0
+        else:#结果输出判定
+            templecounter = 0
+            if u<r and r>l:#右次数最多
+                direc = r
+                p_red.high()
+                p_green.low()#10代表右方向
+                print("右")
+            elif u>r and u>l:#正方向最多
+                direc = u
+                p_red.high()
+                p_green.high()#11代表正方向
+                print("正")
+            elif l>u and l>r:#左方向最多
+                direc =l
+                p_red.low()
+                p_green.high()#01代表左方向
+                print("左")
+            elif u == 0 and r == 0 and l == 0:#没有匹配到箭头的结果
+                direc =direc
+                p_red.low()
+                p_green.low()#00就是g了
+                print('g')
+            else:#anti-error设计
+                direc =direc
+                p_red.low()
+                p_green.low()#00就是g了
+                print('g')
+            u = 0
+            r = 0
+            l = 0#重置计数器
+
+
+        print(u,r,l,direc,templecounter,p_input.value())# 调试用,参数结果输出
+        #正,右,左
+        # 这个例子展示了如何使用find_blobs函数来查找图像中的颜色色块。这个例子特别寻找深绿色的物体。
+    if p_input.value() == 0 and flag == 1:#红绿灯代码进入代码
+    #if p_input.value() == 0:#调试用代码,
+            #重置结果判定,重置箭头识别区段代码电压
+            if reset == 0:
+                p_green.low()
+                p_red.low()
+                reset = 1
+            #设置色块匹配对象
+            blobs_green = img.find_blobs([green_threshold],area_threshold=40,pixels_threshold=20)
+            blobs_red = img.find_blobs([red_threshold],area_threshold=40,pixels_threshold=20)
+
+            lightcounter = lightcounter + 1
+            if blobs_green:
+            #如果找到了目标颜色
+                for b in blobs_green:
+                    img.draw_cross(b[5], b[6]) # cx, cy
+                    #在目标颜色区域的中心画十字形标记
+                p_green.high()
+                g = g+1
+                #print('green')
+            else:
+                p_green.low()
+                g = g
+                #print('nogreen')
+
+
+            if blobs_red:
+                    #如果找到了目标颜色
+                for a in blobs_red:
+                    img.draw_cross(a[5], a[6]) # cx, cy
+                            #在目标颜色区域的中心画十字形标记
+                p_red.high()
+                r = r+1
+                #print('red')
+            else:
+                p_red.low()
+                r = 0
+                #print('nored')
+            if lightcounter <10:
+                lightcounter = lightcounter
+            else:
+                lightcounter = 0
+                print(g,r)
+                if g>r:
+                    p_green.high()
+                    p_red.low()
+                    print('绿')
+                if g<r:
+                    p_green.low()
+                    p_red.high()
+                    print('红')
+                else:
+                    p_green.high()
+                    p_green.high()
+                    print('g')
+                g = 0
+                r = 0
+
+
+    #10红,00无,01绿,11绿.只有01,11是前进,00不影响.10停止.该红绿灯代码的逻辑是有红就停,但有红也有绿的时候回前进
+    #这样的原因是红灯亮与不亮时均容易被识别为红色,且很难通过调整颜色阈值解决(反光等因素).但绿色有良好识别度
+    #openmv会有四个口需要被使用,以该代码为例子,输入口P9用于接收他处控制信号.输出口两个,P1(红灯输出口/二进制编码第一位)
+    #P2(绿灯输出口/二进制编码第二位).注意,GND口要和输入/输出的对象共地.
+    #对于箭头识别,使用多模板.截取三角形与部分横柄作为匹配模板最好.当然,基于huff变化的线搜索也是可以的.
+    #该代码里有一堆可以删减优化的地方,但openmv性能足够,因此留下了冗余也未封装.使用时可以自行修改.
+    #最后不知道为什么代码老是没颜色,可以新开个文档复制过去,这样就又有颜色了.
+    #祝好.
+
+
+
